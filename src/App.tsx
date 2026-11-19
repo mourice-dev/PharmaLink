@@ -311,7 +311,7 @@ function MapExplorer({ mapCenter, requestLocation, notice, setNotice }: MapExplo
       <header className="map-appbar"><a className="map-mobile-brand" href="#home"><Cross size={18}/></a><label className="map-global-search"><Search size={16}/><input value={mapSearch} placeholder="Search pharmacies or neighborhoods" onChange={event => setMapSearch(event.target.value)}/><span>⌘ K</span></label><div className="map-appbar-right"><button aria-label="Notifications" onClick={() => setNotice('You are all caught up.') }><Bell size={17}/><i/></button><button className="map-user-avatar" onClick={() => setNotice('Patient accounts are not required for medicine discovery.')}>N<ChevronDown size={12}/></button></div></header>
       <section className="map-canvas" aria-label="Pharmacy map">
         {hasLocation && <MapContainer className="leaflet-map" center={center} zoom={14} zoomControl={false} scrollWheelZoom>
-          <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> &copy; <a href="https://carto.com/attributions">CARTO</a>' url="https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png" />
+          <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>' url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
           <ZoomControl position="bottomright"/><MapViewport center={center} focused={focused} zoom={radius === 500 ? 15 : 14}/>
           <Circle center={center} radius={radius} pathOptions={{ color: '#16896d', fillColor: '#16896d', fillOpacity: 0.08, weight: 1.5 }}/>
           <CircleMarker center={center} radius={6} pathOptions={{ color: '#fff', weight: 3, fillColor: '#4787e2', fillOpacity: 1 }}/>

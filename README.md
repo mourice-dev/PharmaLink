@@ -68,7 +68,7 @@ The supplied project blueprint describes a broader modular platform. The next su
 6. Add audit logging, automated tests, Docker-based development, and deployment configuration.
 7. Explore integrations only with authorized healthcare data providers.
 
-The map uses CARTO's light no-label basemap style built on OpenStreetMap data to reduce road and label clutter; keep both OpenStreetMap and CARTO attribution visible. Review the chosen tile provider's terms before a public launch. Google Maps directions are universal links; an embedded Google Maps JavaScript map requires a Google Maps Platform key and billing configuration. Do not present stock as confirmed availability unless a reliable update process backs it. Regulatory catalogue data and pharmacy inventory are separate sources of information.
+The map uses OpenStreetMap's standard raster tiles with a muted CSS treatment and visible attribution. The public tile service is suitable for prototype traffic, not an uptime guarantee; review its usage policy and choose a production tile provider or self-hosted option before a public launch. Google Maps directions are universal links; an embedded Google Maps JavaScript map requires a Google Maps Platform key and billing configuration. Do not present stock as confirmed availability unless a reliable update process backs it. Regulatory catalogue data and pharmacy inventory are separate sources of information.
 
 ## Project identity
 
