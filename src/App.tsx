@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { divIcon, type LatLngExpression } from 'leaflet'
 import { Circle, CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, ZoomControl, useMap } from 'react-leaflet'
 import { Activity, ArrowDownUp, ArrowRight, ArrowUpRight, Bell, ChevronDown, Clock3, Cross, LocateFixed, MapPin, Menu, Navigation as NavigationIcon, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
@@ -205,6 +205,12 @@ function MapExplorer({ mapCenter, requestLocation, notice, setNotice, medicines:
   const [walkingRoute, setWalkingRoute] = useState<WalkingRoute | null>(null)
   const [routeLoading, setRouteLoading] = useState(false)
   const [routeError, setRouteError] = useState('')
+  const routeRequestId = useRef(0)
+
+  // A route response may arrive after the user selected another pharmacy, changed
+  // the search, moved location, or left the map. Ignore those stale responses.
+  useEffect(() => { routeRequestId.current += 1 }, [mapSearch, mapCenter[0], mapCenter[1]])
+  useEffect(() => () => { routeRequestId.current += 1 }, [])
 
   useEffect(() => {
     let active = true
@@ -264,10 +270,18 @@ function MapExplorer({ mapCenter, requestLocation, notice, setNotice, medicines:
   const googleDirections = (pharmacy: SearchPharmacy) => `https://www.google.com/maps/dir/?api=1&origin=${mapCenter[0]},${mapCenter[1]}&destination=${pharmacy.lat},${pharmacy.lng}&travelmode=walking`
   const osmDirections = (pharmacy: SearchPharmacy) => `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${mapCenter[0]}%2C${mapCenter[1]}%3B${pharmacy.lat}%2C${pharmacy.lng}`
   const selectPharmacy = (pharmacy: SearchPharmacy) => {
+    const requestId = ++routeRequestId.current
     setSelected(pharmacy.id); setWalkingRoute(null); setRouteError(''); setRouteLoading(true)
-    void fetchShortestWalkingRoute(mapCenter, [pharmacy.lat, pharmacy.lng]).then(setWalkingRoute).catch(error => setRouteError(error instanceof Error ? error.message : 'Could not calculate walking directions.')).finally(() => setRouteLoading(false))
+    void fetchShortestWalkingRoute(mapCenter, [pharmacy.lat, pharmacy.lng]).then(route => {
+      if (routeRequestId.current === requestId) setWalkingRoute(route)
+    }).catch(error => {
+      if (routeRequestId.current === requestId) setRouteError(error instanceof Error ? error.message : 'Could not calculate walking directions.')
+    }).finally(() => {
+      if (routeRequestId.current === requestId) setRouteLoading(false)
+    })
   }
   const locateAgain = () => {
+    routeRequestId.current += 1
     setLocationStatus('locating')
     setLoadError('')
     setSelected(null)
