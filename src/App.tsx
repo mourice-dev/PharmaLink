@@ -308,6 +308,8 @@ function MapExplorer({ mapCenter, requestLocation, notice, setNotice, medicines:
     })
   }
   const changeRadius = (nextRadius: number) => {
+    routeRequestId.current += 1
+    setSelected(null); setWalkingRoute(null); setRouteError(''); setRouteLoading(false)
     setRadius(nextRadius)
     if (!hasLocation) return
     setLoading(true)
