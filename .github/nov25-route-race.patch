@@ -1,0 +1,39 @@
+diff --git a/src/App.tsx b/src/App.tsx
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,4 +1,4 @@
+-import { useCallback, useEffect, useMemo, useState } from 'react'
++import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+ import { divIcon, type LatLngExpression } from 'leaflet'
+ import { Circle, CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, ZoomControl, useMap } from 'react-leaflet'
+ import { Activity, ArrowDownUp, ArrowRight, ArrowUpRight, Bell, ChevronDown, Clock3, Cross, LocateFixed, MapPin, Menu, Navigation as NavigationIcon, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
+@@ -205,6 +205,15 @@ function MapExplorer({ mapCenter, requestLocation, notice, setNotice, medicines:
+   const [walkingRoute, setWalkingRoute] = useState<WalkingRoute | null>(null)
+   const [routeLoading, setRouteLoading] = useState(false)
+   const [routeError, setRouteError] = useState('')
++  const routeRequestId = useRef(0)
++
++  useEffect(() => {
++    routeRequestId.current += 1
++  }, [mapSearch])
++
++  useEffect(() => () => {
++    routeRequestId.current += 1
++  }, [])
+ 
+   useEffect(() => {
+     let active = true
+@@ -266,5 +276,12 @@ function MapExplorer({ mapCenter, requestLocation, notice, setNotice, medicines:
+   const selectPharmacy = (pharmacy: SearchPharmacy) => {
++    const requestId = ++routeRequestId.current
+     setSelected(pharmacy.id); setWalkingRoute(null); setRouteError(''); setRouteLoading(true)
+-    void fetchShortestWalkingRoute(mapCenter, [pharmacy.lat, pharmacy.lng]).then(setWalkingRoute).catch(error => setRouteError(error instanceof Error ? error.message : 'Could not calculate walking directions.')).finally(() => setRouteLoading(false))
++    void fetchShortestWalkingRoute(mapCenter, [pharmacy.lat, pharmacy.lng]).then(route => {
++      if (routeRequestId.current === requestId) setWalkingRoute(route)
++    }).catch(error => {
++      if (routeRequestId.current === requestId) setRouteError(error instanceof Error ? error.message : 'Could not calculate walking directions.')
++    }).finally(() => {
++      if (routeRequestId.current === requestId) setRouteLoading(false)
++    })
+   }
+   const locateAgain = () => {
