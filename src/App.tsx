@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { divIcon, type LatLngExpression } from 'leaflet'
-import { Circle, CircleMarker, MapContainer, Marker, Popup, TileLayer, ZoomControl, useMap } from 'react-leaflet'
+import { Circle, CircleMarker, MapContainer, Marker, Polyline, Popup, TileLayer, ZoomControl, useMap } from 'react-leaflet'
 import { Activity, ArrowDownUp, ArrowRight, ArrowUpRight, Bell, ChevronDown, Clock3, Cross, LocateFixed, MapPin, Menu, Navigation as NavigationIcon, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
+import { demoMedicines as medicines, type Medicine } from './data/demoInventory'
 
-type Pharmacy = { name: string; area: string; distance: string; stock: number; updated: string; initials: string; color: string; lat: number; lng: number }
-type Medicine = { name: string; detail: string; form: string; category: string; pharmacies: Pharmacy[] }
 type OsmPharmacy = { id: string; name: string; lat: number; lng: number; area: string; phone?: string; openingHours?: string; website?: string }
 
 const NEARBY_RADIUS_METERS = 1000
@@ -62,27 +61,11 @@ async function fetchNearbyPharmacies(center: [number, number], radius: number): 
 
 const pharmacyMarkerIcon = divIcon({
   className: 'pharmacy-marker-shell',
-  html: '<span class="pharmacy-marker-pin"><i>✚</i></span>',
-  iconSize: [32, 40],
-  iconAnchor: [16, 37],
-  popupAnchor: [0, -34],
+  html: '<span class="pharmacy-marker-pin"><b>⌂</b><i>✚</i></span>',
+  iconSize: [48, 56],
+  iconAnchor: [24, 52],
+  popupAnchor: [0, -48],
 })
-
-const medicines: Medicine[] = [
-  { name: 'Amoxicillin', detail: '500 mg · Capsules', form: 'Capsules', category: 'Antibiotics', pharmacies: [
-    { name: 'Kigali Health Pharmacy', area: 'Kacyiru, Kigali', distance: '1.2 km', stock: 25, updated: '12 min ago', initials: 'KH', color: 'mint', lat: -1.9441, lng: 30.0919 },
-    { name: 'Remera Community Pharmacy', area: 'Remera, Kigali', distance: '2.8 km', stock: 18, updated: '34 min ago', initials: 'RC', color: 'peach', lat: -1.9574, lng: 30.1112 },
-    { name: 'CityCare Pharmacy', area: 'Nyarutarama, Kigali', distance: '3.4 km', stock: 9, updated: '1 hr ago', initials: 'CC', color: 'lavender', lat: -1.9395, lng: 30.1050 },
-  ] },
-  { name: 'Paracetamol', detail: '500 mg · Tablets', form: 'Tablets', category: 'Pain relief', pharmacies: [
-    { name: 'Kigali Health Pharmacy', area: 'Kacyiru, Kigali', distance: '1.2 km', stock: 42, updated: '8 min ago', initials: 'KH', color: 'mint', lat: -1.9441, lng: 30.0919 },
-    { name: 'Remera Community Pharmacy', area: 'Remera, Kigali', distance: '2.8 km', stock: 30, updated: '26 min ago', initials: 'RC', color: 'peach', lat: -1.9574, lng: 30.1112 },
-  ] },
-  { name: 'Cetirizine', detail: '10 mg · Tablets', form: 'Tablets', category: 'Allergy', pharmacies: [
-    { name: 'CityCare Pharmacy', area: 'Nyarutarama, Kigali', distance: '3.4 km', stock: 16, updated: '18 min ago', initials: 'CC', color: 'lavender', lat: -1.9395, lng: 30.1050 },
-    { name: 'Kigali Health Pharmacy', area: 'Kacyiru, Kigali', distance: '1.2 km', stock: 12, updated: '52 min ago', initials: 'KH', color: 'mint', lat: -1.9441, lng: 30.0919 },
-  ] },
-]
 
 function App() {
   const [query, setQuery] = useState('')
@@ -108,7 +91,7 @@ function App() {
   const pharmacies = useMemo(() => sortNearest ? [...activeMedicine.pharmacies].sort((a, b) => parseFloat(a.distance) - parseFloat(b.distance)) : activeMedicine.pharmacies, [activeMedicine, sortNearest])
   const search = () => {
     const found = medicines.find(m => `${m.name} ${m.detail} ${m.category}`.toLowerCase().includes(query.toLowerCase().trim()))
-    if (found) { setActiveMedicine(found); setSelected(0); setNotice('') }
+    if (found) { setActiveMedicine(found); setSelected(0); setNotice(''); window.location.hash = 'map' }
     else setNotice('No matching medicine in this demo catalogue. Try Amoxicillin, Paracetamol or Cetirizine.')
   }
   const requestLocation = useCallback(() => new Promise<[number, number]>((resolve, reject) => {
@@ -142,7 +125,7 @@ function App() {
 
   if (page === 'map') return <MapExplorer
     mapCenter={mapCenter} requestLocation={requestLocation}
-    notice={notice} setNotice={setNotice}
+    notice={notice} setNotice={setNotice} medicines={medicines} initialQuery={query}
   />
 
   return <>
@@ -186,19 +169,42 @@ type MapExplorerProps = {
   requestLocation: () => Promise<[number, number]>
   notice: string
   setNotice: (value: string) => void
+  medicines: Medicine[]
+  initialQuery: string
 }
 
-function MapExplorer({ mapCenter, requestLocation, notice, setNotice }: MapExplorerProps) {
+type SearchPharmacy = { id: string; name: string; lat: number; lng: number; area: string; phone?: string; source: 'osm' | 'demo-stock'; stock?: number }
+type WalkingRoute = { coordinates: [number, number][]; distance: number; duration: number; streets: string[] }
+
+async function fetchShortestWalkingRoute(origin: [number, number], destination: [number, number]): Promise<WalkingRoute> {
+  const response = await fetch('https://valhalla1.openstreetmap.de/route', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(12_000),
+    body: JSON.stringify({ locations: [{ lat: origin[0], lon: origin[1] }, { lat: destination[0], lon: destination[1] }], costing: 'pedestrian', costing_options: { pedestrian: { shortest: true } }, units: 'kilometers', format: 'osrm', shape_format: 'geojson', directions_type: 'instructions' }),
+  })
+  if (!response.ok) throw new Error(`Walking directions are unavailable (${response.status}).`)
+  const payload = await response.json() as { routes?: Array<{ geometry?: { coordinates?: [number, number][] }; distance?: number; duration?: number; legs?: Array<{ steps?: Array<{ name?: string }> }> }> }
+  const route = payload.routes?.[0]
+  const coordinates = route?.geometry?.coordinates
+  if (!route || !coordinates?.length) throw new Error('No walkable route was found for this pharmacy.')
+  const streets = [...new Set((route.legs ?? []).flatMap(leg => leg.steps ?? []).map(step => step.name?.trim()).filter((name): name is string => Boolean(name && name !== '-')))]
+  // OSRM-compatible route responses report distance in meters.
+  return { coordinates, distance: (route.distance ?? 0) / 1000, duration: route.duration ?? 0, streets }
+}
+
+function MapExplorer({ mapCenter, requestLocation, notice, setNotice, medicines: medicineCatalog, initialQuery }: MapExplorerProps) {
   const [pharmacies, setPharmacies] = useState<OsmPharmacy[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
-  const [mapSearch, setMapSearch] = useState('')
+  const [mapSearch, setMapSearch] = useState(initialQuery)
   const [selected, setSelected] = useState<string | null>(null)
   const [filter, setFilter] = useState('All')
   const [radius, setRadius] = useState(NEARBY_RADIUS_METERS)
   const [locationStatus, setLocationStatus] = useState<'locating' | 'loading' | 'ready' | 'denied' | 'error'>('locating')
   const [hasLocation, setHasLocation] = useState(false)
   const [center, setCenter] = useState<LatLngExpression>(mapCenter)
+  const [walkingRoute, setWalkingRoute] = useState<WalkingRoute | null>(null)
+  const [routeLoading, setRouteLoading] = useState(false)
+  const [routeError, setRouteError] = useState('')
 
   useEffect(() => {
     let active = true
@@ -207,7 +213,7 @@ function MapExplorer({ mapCenter, requestLocation, notice, setNotice }: MapExplo
       if (!active) return
       setCenter(coords)
       setHasLocation(true)
-      setLocationStatus('loading')
+      setLocationStatus('ready')
       return loadNearbyPharmacies(coords, NEARBY_RADIUS_METERS).then(data => {
         if (!active) return
         setPharmacies(data)
@@ -231,7 +237,7 @@ function MapExplorer({ mapCenter, requestLocation, notice, setNotice }: MapExplo
 
   useEffect(() => { setCenter(mapCenter) }, [mapCenter])
 
-  const matches = pharmacies.filter(pharmacy => !mapSearch.trim() || `${pharmacy.name} ${pharmacy.area}`.toLowerCase().includes(mapSearch.toLowerCase().trim()))
+  const matchedMedicine = medicineCatalog.find(medicine => `${medicine.name} ${medicine.detail} ${medicine.category}`.toLowerCase().includes(mapSearch.trim().toLowerCase()))
   const distanceFromCenter = (pharmacy: OsmPharmacy) => {
     const rad = (value: number) => value * Math.PI / 180
     const latDelta = rad(pharmacy.lat - mapCenter[0])
@@ -239,15 +245,28 @@ function MapExplorer({ mapCenter, requestLocation, notice, setNotice }: MapExplo
     const a = Math.sin(latDelta / 2) ** 2 + Math.cos(rad(mapCenter[0])) * Math.cos(rad(pharmacy.lat)) * Math.sin(lngDelta / 2) ** 2
     return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   }
-  const distanceLabel = (pharmacy: OsmPharmacy) => {
+  const distanceLabel = (pharmacy: SearchPharmacy) => {
     const distance = distanceFromCenter(pharmacy)
     return distance < 1 ? `${Math.round(distance * 1000)} m away` : `${distance.toFixed(1)} km away`
   }
-  const results = filter === 'Nearest' ? [...matches].sort((a, b) => distanceFromCenter(a) - distanceFromCenter(b)) : filter === 'With phone' ? matches.filter(pharmacy => pharmacy.phone) : matches
+  const searchMatches: SearchPharmacy[] = matchedMedicine
+    ? pharmacies.filter(pharmacy => distanceFromCenter(pharmacy) <= radius / 1000).map((pharmacy, index) => ({
+      ...pharmacy,
+      // Demo stock is attached to real pharmacy coordinates returned by OpenStreetMap.
+      // Replace this stock adapter with pharmacy-reported inventory when it becomes available.
+      source: 'demo-stock' as const,
+      stock: 8 + ((index * 13 + matchedMedicine.name.length * 7) % 38),
+    }))
+    : pharmacies.filter(pharmacy => !mapSearch.trim() || `${pharmacy.name} ${pharmacy.area}`.toLowerCase().includes(mapSearch.toLowerCase().trim())).map(pharmacy => ({ ...pharmacy, source: 'osm' as const }))
+  const results = filter === 'Nearest' ? [...searchMatches].sort((a, b) => distanceFromCenter(a) - distanceFromCenter(b)) : filter === 'With phone' ? searchMatches.filter(pharmacy => pharmacy.phone) : searchMatches
   const focused = results.find(pharmacy => pharmacy.id === selected)
 
-  const googleDirections = (pharmacy: OsmPharmacy) => `https://www.google.com/maps/dir/?api=1&origin=${mapCenter[0]},${mapCenter[1]}&destination=${pharmacy.lat},${pharmacy.lng}`
-  const osmDirections = (pharmacy: OsmPharmacy) => `https://www.openstreetmap.org/directions?to=${pharmacy.lat}%2C${pharmacy.lng}`
+  const googleDirections = (pharmacy: SearchPharmacy) => `https://www.google.com/maps/dir/?api=1&origin=${mapCenter[0]},${mapCenter[1]}&destination=${pharmacy.lat},${pharmacy.lng}&travelmode=walking`
+  const osmDirections = (pharmacy: SearchPharmacy) => `https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=${mapCenter[0]}%2C${mapCenter[1]}%3B${pharmacy.lat}%2C${pharmacy.lng}`
+  const selectPharmacy = (pharmacy: SearchPharmacy) => {
+    setSelected(pharmacy.id); setWalkingRoute(null); setRouteError(''); setRouteLoading(true)
+    void fetchShortestWalkingRoute(mapCenter, [pharmacy.lat, pharmacy.lng]).then(setWalkingRoute).catch(error => setRouteError(error instanceof Error ? error.message : 'Could not calculate walking directions.')).finally(() => setRouteLoading(false))
+  }
   const locateAgain = () => {
     setLocationStatus('locating')
     setLoadError('')
@@ -308,27 +327,30 @@ function MapExplorer({ mapCenter, requestLocation, notice, setNotice }: MapExplo
       <div className="map-sidebar-bottom"><button onClick={() => setNotice('Settings will be available in a future release.')}>Settings</button><button onClick={() => setNotice('For help, please contact your local pharmacy.')}>Help center</button><small>PharmaLink · Kigali, Rwanda</small></div>
     </aside>
     <main className="map-workspace">
-      <header className="map-appbar"><a className="map-mobile-brand" href="#home"><Cross size={18}/></a><label className="map-global-search"><Search size={16}/><input value={mapSearch} placeholder="Search pharmacies or neighborhoods" onChange={event => setMapSearch(event.target.value)}/><span>⌘ K</span></label><div className="map-appbar-right"><button aria-label="Notifications" onClick={() => setNotice('You are all caught up.') }><Bell size={17}/><i/></button><button className="map-user-avatar" onClick={() => setNotice('Patient accounts are not required for medicine discovery.')}>N<ChevronDown size={12}/></button></div></header>
+      <header className="map-appbar"><a className="map-mobile-brand" href="#home"><Cross size={18}/></a><label className="map-global-search"><Search size={16}/><input value={mapSearch} placeholder="Search medicine or pharmacy" onChange={event => { setMapSearch(event.target.value); setSelected(null); setWalkingRoute(null); setRouteError('') }}/><span>⌘ K</span></label><div className="map-appbar-right"><button aria-label="Notifications" onClick={() => setNotice('You are all caught up.') }><Bell size={17}/><i/></button><button className="map-user-avatar" onClick={() => setNotice('Patient accounts are not required for medicine discovery.')}>N<ChevronDown size={12}/></button></div></header>
       <section className="map-canvas" aria-label="Pharmacy map">
         {hasLocation && <MapContainer className="leaflet-map" center={center} zoom={14} zoomControl={false} scrollWheelZoom>
           <TileLayer attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>' url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          <ZoomControl position="bottomright"/><MapViewport center={center} focused={focused} zoom={radius === 500 ? 15 : 14}/>
+          <ZoomControl position="bottomright"/><MapViewport center={center} focused={focused} route={walkingRoute} zoom={radius === 500 ? 15 : 14}/>
           <Circle center={center} radius={radius} pathOptions={{ color: '#16896d', fillColor: '#16896d', fillOpacity: 0.08, weight: 1.5 }}/>
           <CircleMarker center={center} radius={6} pathOptions={{ color: '#fff', weight: 3, fillColor: '#4787e2', fillOpacity: 1 }}/>
-          {results.map(pharmacy => <Marker key={pharmacy.id} position={[pharmacy.lat, pharmacy.lng]} icon={pharmacyMarkerIcon} eventHandlers={{ click: () => setSelected(pharmacy.id) }}>
-            <Popup><div className="osm-popup"><b>{pharmacy.name}</b><span>{pharmacy.area}</span>{pharmacy.phone && <a href={`tel:${pharmacy.phone}`}>{pharmacy.phone}</a>}<a href={googleDirections(pharmacy)} target="_blank" rel="noreferrer">Directions in Google Maps ↗</a></div></Popup>
+          {walkingRoute && <Polyline positions={walkingRoute.coordinates.map(([lng, lat]) => [lat, lng] as [number, number])} pathOptions={{ color: '#16896d', weight: 6, opacity: .9 }} />}
+          {results.map(pharmacy => <Marker key={pharmacy.id} position={[pharmacy.lat, pharmacy.lng]} icon={pharmacyMarkerIcon} eventHandlers={{ click: () => selectPharmacy(pharmacy) }}>
+            <Popup><div className="osm-popup"><b>{pharmacy.name}</b><span>{pharmacy.area}</span>{pharmacy.source === 'demo-stock' && <span>OSM pharmacy location · {pharmacy.stock} demo units (not confirmed)</span>}{pharmacy.phone && <a href={`tel:${pharmacy.phone}`}>{pharmacy.phone}</a>}<button onClick={() => selectPharmacy(pharmacy)}>Show walking route</button><a href={googleDirections(pharmacy)} target="_blank" rel="noreferrer">Directions in Google Maps ↗</a><a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${pharmacy.name} ${pharmacy.area}`)}`} target="_blank" rel="noreferrer">Check pharmacy on Google Maps ↗</a></div></Popup>
           </Marker>)}
         </MapContainer>}
         {!hasLocation && <div className="location-gate"><div className="location-gate-icon"><MapPin size={24}/></div><span className="panel-eyebrow">NEARBY PHARMACY SEARCH</span><h2>{locationStatus === 'locating' ? 'Finding your location' : 'See pharmacies close to you'}</h2><p>{locationStatus === 'locating' ? 'Your browser will ask for location access. We only search nearby.' : loadError || 'Allow location access to find pharmacies within a small radius.'}</p><button onClick={locateAgain}><LocateFixed size={15}/>{locationStatus === 'locating' ? 'Requesting location…' : 'Use my current location'}</button><small>Search radius: {formatRadius(radius)} · Your precise location is not saved.</small></div>}
         {hasLocation && <div className="explorer-map-top"><button className="explorer-home" onClick={() => window.location.hash = 'home'}><Cross size={13}/> Home</button><button onClick={locateAgain}><NavigationIcon size={13}/> Current location</button><a href={`https://www.google.com/maps/search/?api=1&query=pharmacies+near+${mapCenter[0]}%2C${mapCenter[1]}`} target="_blank" rel="noreferrer"><MapPin size={13}/> Open Google Maps</a></div>}
         <aside className="map-results-panel">
-          <div className="map-results-heading"><div><span className="panel-eyebrow">NEAR YOUR CURRENT LOCATION</span><h2>Pharmacies within {formatRadius(radius)}</h2><p>{locationStatus === 'ready' ? `${results.length} nearby locations` : locationStatus === 'locating' ? 'Requesting your location…' : 'Nearby search only'}</p></div><button aria-label="Refresh nearby pharmacy locations" onClick={() => { osmPharmacyMemoryCache = null; osmPharmacyPending = null; setLoading(true); setLoadError(''); loadNearbyPharmacies(mapCenter, radius).then(data => { setPharmacies(data); if (!data.length) setLoadError(`No pharmacies are mapped within ${formatRadius(radius)} of your location.`) }).catch(error => setLoadError(error instanceof Error ? error.message : 'Could not load nearby pharmacies.')).finally(() => setLoading(false)) }}>↻</button></div>
+          <div className="map-results-heading"><div><span className="panel-eyebrow">NEAR YOUR CURRENT LOCATION</span><h2>{matchedMedicine ? `${matchedMedicine.name} nearby` : `Pharmacies within ${formatRadius(radius)}`}</h2><p>{locationStatus === 'ready' ? `${results.length} nearby ${matchedMedicine ? 'demo matches' : 'locations'}` : locationStatus === 'locating' ? 'Requesting your location…' : 'Nearby search only'}</p></div><button aria-label="Refresh nearby pharmacy locations" onClick={() => { osmPharmacyMemoryCache = null; osmPharmacyPending = null; setLoading(true); setLoadError(''); loadNearbyPharmacies(mapCenter, radius).then(data => { setPharmacies(data); if (!data.length) setLoadError(`No pharmacies are mapped within ${formatRadius(radius)} of your location.`) }).catch(error => setLoadError(error instanceof Error ? error.message : 'Could not load nearby pharmacies.')).finally(() => setLoading(false)) }}>↻</button></div>
           <div className="map-radius-controls"><span>SEARCH RADIUS</span><button disabled={!hasLocation} className={radius === 500 ? 'active' : ''} onClick={() => changeRadius(500)}>500 m</button><button disabled={!hasLocation} className={radius === 1000 ? 'active' : ''} onClick={() => changeRadius(1000)}>1 km</button></div>
           <div className="map-results-filters">{['All', 'Nearest', 'With phone'].map(item => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item}</button>)}</div>
           {(locationStatus === 'locating' || locationStatus === 'loading') && <div className="map-load-state"><span className="map-spinner"/>{locationStatus === 'locating' ? 'Requesting your current location…' : 'Loading nearby pharmacies…'}</div>}
           {locationStatus === 'denied' && <div className="map-empty">Allow location access to search nearby pharmacies. We will not show the whole city.</div>}
-          {(locationStatus === 'ready' || locationStatus === 'error') && <div className="map-results-scroll">{loading ? <div className="map-load-state"><span className="map-spinner"/>Loading nearby pharmacies…</div> : results.length ? results.map(pharmacy => <article key={pharmacy.id} className={`explorer-pharmacy ${selected === pharmacy.id ? 'active' : ''}`} onClick={() => setSelected(pharmacy.id)}><span className="mini-pharmacy-mark mint"><Cross size={14}/></span><span className="explorer-pharmacy-body"><b>{pharmacy.name}</b><small>{distanceLabel(pharmacy)} · {pharmacy.area}</small><span className="explorer-stock">OpenStreetMap listing</span></span><ArrowUpRight size={14}/></article>) : <div className="map-empty">{loadError || 'No pharmacies match nearby. Try a larger radius or another search.'}</div>}</div>}
-          <div className="map-results-footer"><span><Bell size={13}/> Stock data is not connected</span>{focused && <div>{focused.phone && <a href={`tel:${focused.phone}`}>Call</a>}<a href={googleDirections(focused)} target="_blank" rel="noreferrer">Google Maps</a><a href={osmDirections(focused)} target="_blank" rel="noreferrer">OSM</a></div>}</div>
+          {(locationStatus === 'ready' || locationStatus === 'error') && <div className="map-results-scroll">{loading && !matchedMedicine ? <div className="map-load-state"><span className="map-spinner"/>Loading nearby pharmacies…</div> : results.length ? results.map(pharmacy => <article key={pharmacy.id} className={`explorer-pharmacy ${selected === pharmacy.id ? 'active' : ''}`} onClick={() => selectPharmacy(pharmacy)}><span className="mini-pharmacy-mark mint"><Cross size={14}/></span><span className="explorer-pharmacy-body"><b>{pharmacy.name}</b><small>{distanceLabel(pharmacy)} · {pharmacy.area}</small><span className="explorer-stock">{pharmacy.source === 'demo-stock' ? `${pharmacy.stock} demo units · availability unconfirmed` : 'OpenStreetMap pharmacy listing'}</span></span><ArrowUpRight size={14}/></article>) : <div className="map-empty">{matchedMedicine ? loading ? 'Loading real nearby pharmacy locations…' : loadError || `No mapped pharmacies found within ${formatRadius(radius)}.` : loadError || 'No pharmacies match nearby. Try a larger radius or another search.'}</div>}</div>}
+          {matchedMedicine && <div className="sample-inventory-note">DEMO STOCK ONLY · Pharmacy pins and streets use OpenStreetMap locations. Quantities are mock data and availability is unconfirmed.</div>}
+          {focused && <div className="walking-route-card"><b>{routeLoading ? 'Finding shortest walking route…' : walkingRoute ? 'Shortest walking route' : 'Walking directions'}</b>{routeLoading && <span className="map-spinner"/>}{routeError && <small>{routeError}</small>}{walkingRoute && <><small>{walkingRoute.distance.toFixed(1)} km · about {Math.max(1, Math.round(walkingRoute.duration / 60))} min walk</small><span>{walkingRoute.streets.length ? walkingRoute.streets.slice(0, 5).join(' → ') : 'Follow the highlighted walking route.'}</span></>}<a href={googleDirections(focused)} target="_blank" rel="noreferrer">Open walking directions <ArrowUpRight size={13}/></a></div>}
+          <div className="map-results-footer"><span><Bell size={13}/> Stock data is not connected</span>{focused && <div>{focused.phone && <a href={`tel:${focused.phone}`}>Call</a>}<a href={osmDirections(focused)} target="_blank" rel="noreferrer">OSM</a></div>}</div>
         </aside>
         {notice && <div className="map-toast" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss"><X size={13}/></button></div>}
       </section>
@@ -336,12 +358,17 @@ function MapExplorer({ mapCenter, requestLocation, notice, setNotice }: MapExplo
   </div>
 }
 
-function MapViewport({ center, focused, zoom }: { center: LatLngExpression; focused?: OsmPharmacy; zoom: number }) {
+function MapViewport({ center, focused, route, zoom }: { center: LatLngExpression; focused?: SearchPharmacy; route: WalkingRoute | null; zoom: number }) {
   const map = useMap()
   useEffect(() => {
+    if (route?.coordinates.length) {
+      const bounds = route.coordinates.map(([lng, lat]) => [lat, lng] as [number, number])
+      map.fitBounds(bounds, { paddingTopLeft: [300, 50], paddingBottomRight: [55, 55], maxZoom: 16, animate: true })
+      return
+    }
     const target: LatLngExpression = focused ? [focused.lat, focused.lng] : center
     map.flyTo(target, focused ? 16 : zoom, { duration: 0.7 })
-  }, [center, focused, map, zoom])
+  }, [center, focused, map, route, zoom])
   return null
 }
 
